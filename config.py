@@ -57,11 +57,18 @@ SEED = 42
 #     conveniently fits our framing: the "model" turn is "a person replying").
 #   * The sequence begins with the tokenizer's BOS token.
 #
-# The `{% generation %} … {% endgeneration %}` markers around the model's content are
+# The `{% generation %} … {% endgeneration %}` markers around the model's reply are
 # what let TRL compute the loss on the reply turns ONLY (see `ASSISTANT_ONLY_LOSS`).
 # Without those markers, "assistant-only" loss masking cannot know which tokens are the
 # reply. We wrap only the model turns, so the model learns to *produce* human replies
 # rather than to also model the incoming prompts.
+#
+# CRUCIAL: the generation span must include the closing `<end_of_turn>` token, not just the
+# reply text. That token is how a turn *ends* — if it's outside the loss mask, the model
+# gets no gradient teaching it to emit `<end_of_turn>`, so at inference it never learns to
+# stop and rambles past its reply. So for model turns we emit `<end_of_turn>` *inside*
+# `{% generation %}`; the trailing newline (a formatting separator the model needn't
+# generate, since decoding stops at `<end_of_turn>`) stays outside the mask.
 #
 # NOTE on double-BOS: because this template emits `{{ bos_token }}`, when TRL tokenizes
 # the resulting string it must NOT add another BOS. TRL/`apply_chat_template` handle this
@@ -72,11 +79,11 @@ CHAT_TEMPLATE = (
     "{% for message in messages %}"
     "{{ '<start_of_turn>' + message['role'] + '\n' }}"
     "{% if message['role'] == 'model' %}"
-    "{% generation %}{{ message['content'] | trim }}{% endgeneration %}"
+    "{% generation %}{{ message['content'] | trim }}{{ '<end_of_turn>' }}{% endgeneration %}"
+    "{{ '\n' }}"
     "{% else %}"
-    "{{ message['content'] | trim }}"
+    "{{ message['content'] | trim }}{{ '<end_of_turn>\n' }}"
     "{% endif %}"
-    "{{ '<end_of_turn>\n' }}"
     "{% endfor %}"
     "{% if add_generation_prompt %}{{ '<start_of_turn>model\n' }}{% endif %}"
 )

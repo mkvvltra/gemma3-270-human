@@ -97,13 +97,21 @@ def main() -> None:
     num_train_epochs = 3               # 2–3 is plenty; more on a small corpus => memorization
     per_device_train_batch_size = 16   # lower this if you hit OOM…
     gradient_accumulation_steps = 2    # …and raise this to keep the effective batch (32) stable
+    max_length = 1024                  # dialogues are short; 1024 tokens is plenty
 
-    # transformers 5.x removed `warmup_ratio`, so reproduce the same "warm up over the first
-    # ~3% of training" intent as an absolute `warmup_steps`. `packing=True` concatenates short
-    # turns, so the real step count is a bit lower than this estimate — that only means a few
-    # extra warmup steps, which is harmless (and good) for early-update stability.
+    # transformers 5.x removed `warmup_ratio`, so express the same "warm up over the first ~3%
+    # of training" intent as an absolute `warmup_steps`. The catch: with `packing=True` the
+    # optimizer-step count tracks the *token* total (short turns are concatenated into
+    # max_length blocks), NOT the raw example count — so a ratio-of-examples estimate is off by
+    # the packing factor (here ~7x). Estimate the packed step count from the tokenized lengths
+    # instead. This is a cheap one-time pass (the trainer re-tokenizes during packing anyway).
     effective_batch = per_device_train_batch_size * gradient_accumulation_steps
-    steps_per_epoch = math.ceil(len(dataset["train"]) / effective_batch)
+    total_tokens = sum(
+        len(tokenizer.apply_chat_template(ex["messages"], tokenize=True)["input_ids"])
+        for ex in dataset["train"]
+    )
+    packed_sequences = math.ceil(total_tokens / max_length)
+    steps_per_epoch = math.ceil(packed_sequences / effective_batch)
     warmup_steps = max(1, round(0.03 * steps_per_epoch * num_train_epochs))
 
     args = SFTConfig(
@@ -132,7 +140,7 @@ def main() -> None:
         bf16=(device == "cuda"),
 
         # --- Sequence handling ---
-        max_length=1024,             # dialogues are short; 1024 tokens is plenty
+        max_length=max_length,       # dialogues are short; 1024 tokens is plenty (set above)
         packing=True,                # concatenate short examples to fill sequences => big throughput win
         assistant_only_loss=ASSISTANT_ONLY_LOSS,  # loss only on the human-reply turns
 

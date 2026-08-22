@@ -70,6 +70,12 @@ SEED = 42
 # `{% generation %}`; the trailing newline (a formatting separator the model needn't
 # generate, since decoding stops at `<end_of_turn>`) stays outside the mask.
 #
+# The reply branch matches BOTH 'model' (our data's role) and 'assistant'. Our data only
+# ever uses 'model', but TRL's stop-token sanity check probes the template with a hardcoded
+# 'assistant' turn — if the template didn't treat that as a reply turn, the check would see
+# an empty mask and (falsely) warn "the model may not learn to stop". Matching both keeps
+# the check accurate without changing anything about how our 'model' data is rendered.
+#
 # NOTE on double-BOS: because this template emits `{{ bos_token }}`, when TRL tokenizes
 # the resulting string it must NOT add another BOS. TRL/`apply_chat_template` handle this
 # correctly, but stage 2 prints the raw token IDs so you can verify there is exactly one
@@ -78,7 +84,7 @@ CHAT_TEMPLATE = (
     "{{ bos_token }}"
     "{% for message in messages %}"
     "{{ '<start_of_turn>' + message['role'] + '\n' }}"
-    "{% if message['role'] == 'model' %}"
+    "{% if message['role'] in ['model', 'assistant'] %}"
     "{% generation %}{{ message['content'] | trim }}{{ '<end_of_turn>' }}{% endgeneration %}"
     "{{ '\n' }}"
     "{% else %}"

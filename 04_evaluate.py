@@ -86,7 +86,11 @@ def qualitative(model, tok, device: str) -> None:
             do_sample=True,        # sampling gives natural, varied phrasing…
             temperature=0.8,       # …with a bit of randomness
             top_p=0.9,             # nucleus sampling to avoid weird low-probability tokens
-            repetition_penalty=1.3,
+            # NOT repetition_penalty: it divides the logit of every token already in the
+            # context, and the prompt ends with the user turn's <end_of_turn>. That penalizes
+            # the very token the model must emit to stop, so it would ramble to max_new_tokens.
+            # no_repeat_ngram_size curbs verbatim loops without touching the single stop token.
+            no_repeat_ngram_size=3,
             eos_token_id=stop_ids,   # stop on <end_of_turn> (the turn terminator), not just <eos>
             pad_token_id=tok.eos_token_id,
         )

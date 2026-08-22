@@ -108,9 +108,13 @@ def generate_reply(model, tok, messages: list[dict], device: str) -> str:
         do_sample=True,           # sampling => natural, varied phrasing
         temperature=0.8,
         top_p=0.9,
-        repetition_penalty=1.3,   # discourage the little model from looping on a phrase
+        # NOT repetition_penalty: it divides the logit of every token already in the context,
+        # and the prompt ends with the user turn's <end_of_turn>. That penalizes the very stop
+        # token the model must emit, so it would ramble to max_new_tokens instead of stopping.
+        # no_repeat_ngram_size curbs the little model's loops without touching the stop token.
+        no_repeat_ngram_size=3,
         pad_token_id=tok.eos_token_id,
-        eos_token_id=stop_ids,    # stop on EOS or <end_of_turn>, whichever comes first
+        eos_token_id=stop_ids,    # stop on EOS (1) or <end_of_turn> (106), whichever comes first
     )
     # Slice off the prompt tokens; decode only what the model newly generated.
     reply = tok.decode(out[0][prompt_len:], skip_special_tokens=True).strip()

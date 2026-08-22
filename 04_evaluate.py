@@ -58,6 +58,17 @@ def qualitative(model, tok, device: str) -> None:
     print("-" * 70)
     print("1) QUALITATIVE: generations on a fixed prompt set")
     print("-" * 70)
+
+    # The model was trained (via the chat template's loss mask) to end its reply with
+    # <end_of_turn>. But the base Gemma generation config stops on <eos> (id 1), a token that
+    # never appears between turns — so without overriding this, generate() would ignore the
+    # model's <end_of_turn> and ramble on to max_new_tokens. Tell it to stop on <end_of_turn>
+    # (keeping <eos> as a fallback) so replies end where the model intends.
+    eot_id = tok.convert_tokens_to_ids("<end_of_turn>")
+    stop_ids = [eot_id]
+    if tok.eos_token_id is not None and tok.eos_token_id != eot_id:
+        stop_ids.append(tok.eos_token_id)
+
     for prompt in EVAL_PROMPTS:
         # Wrap the prompt as a single `user` turn and ask for the model's reply. The
         # template's add_generation_prompt appends the "<start_of_turn>model" opener.
@@ -76,6 +87,7 @@ def qualitative(model, tok, device: str) -> None:
             temperature=0.8,       # …with a bit of randomness
             top_p=0.9,             # nucleus sampling to avoid weird low-probability tokens
             repetition_penalty=1.3,
+            eos_token_id=stop_ids,   # stop on <end_of_turn> (the turn terminator), not just <eos>
             pad_token_id=tok.eos_token_id,
         )
         # Decode only the NEW tokens (everything after the prompt) = the model's reply.

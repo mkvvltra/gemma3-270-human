@@ -1,0 +1,22 @@
+# ---------------------------------------------------------------------------
+# Dependencies for the gemma3-270m-human fine-tuning pipeline.
+#
+# Version notes:
+#   - We pin lower bounds rather than exact versions so you get recent fixes,
+#     but the lower bounds are what these scripts were written against.
+#   - `trl` is the star of the show: it wraps the training loop, chat-template
+#     handling, loss masking, and packing so we don't hand-roll them.
+#   - `peft` is only strictly needed in Phase 2 (LoRA personalities), but we
+#     install it now so `05_export_base.py`'s LoRA preview runs.
+# ---------------------------------------------------------------------------
+
+trl>=0.12.0                 # high-level trainers (SFTTrainer/SFTConfig) built on top of transformers
+transformers>=4.44.0        # model + tokenizer loading, the actual Gemma3 architecture
+datasets>=2.20.0            # downloading + transforming the dialogue corpus
+accelerate>=0.33.0          # device placement / mixed precision / (multi-)GPU plumbing
+peft>=0.12.0                # LoRA adapters — used in Phase 2, previewed in stage 5
+torch>=2.3.0                # the tensor/autograd backend (CUDA on cloud, MPS on Apple Silicon)
+
+# Quality-of-life / optional but recommended:
+sentencepiece>=0.2.0        # Gemma's tokenizer relies on this
+huggingface_hub>=0.24.0     # `huggingface-cli login`, pushing the final model

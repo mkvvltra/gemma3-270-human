@@ -21,6 +21,8 @@ will most often change to improve results: the *data* (stage 1) and `num_train_e
 Run (on a GPU):  python 03_train_sft.py
 """
 
+import math
+
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM
@@ -90,25 +92,39 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Training configuration. Every field is annotated.
     # ------------------------------------------------------------------
+    # A few knobs are referenced both here and in the warmup calc below, so pull them out
+    # as named values to keep the two in sync.
+    num_train_epochs = 3               # 2–3 is plenty; more on a small corpus => memorization
+    per_device_train_batch_size = 16   # lower this if you hit OOM…
+    gradient_accumulation_steps = 2    # …and raise this to keep the effective batch (32) stable
+
+    # transformers 5.x removed `warmup_ratio`, so reproduce the same "warm up over the first
+    # ~3% of training" intent as an absolute `warmup_steps`. `packing=True` concatenates short
+    # turns, so the real step count is a bit lower than this estimate — that only means a few
+    # extra warmup steps, which is harmless (and good) for early-update stability.
+    effective_batch = per_device_train_batch_size * gradient_accumulation_steps
+    steps_per_epoch = math.ceil(len(dataset["train"]) / effective_batch)
+    warmup_steps = max(1, round(0.03 * steps_per_epoch * num_train_epochs))
+
     args = SFTConfig(
         output_dir=str(SFT_MODEL_DIR),
 
         # --- How long to train ---
         # Start with 2–3 epochs. More epochs on a small dataset => memorization, not
         # generalization. Trust the validation loss (below) over the training loss.
-        num_train_epochs=3,
+        num_train_epochs=num_train_epochs,
 
         # --- Batch size / effective batch ---
         # Effective batch = per_device_batch * grad_accum * num_gpus.
         # 16 * 2 = 32 sequences/step. Lower per_device_train_batch_size if you hit OOM;
         # raise grad_accum to compensate so the effective batch stays stable.
-        per_device_train_batch_size=16,
-        gradient_accumulation_steps=2,
+        per_device_train_batch_size=per_device_train_batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
 
         # --- Optimizer schedule ---
         learning_rate=5e-5,          # modest for a FULL fine-tune (LoRA would use ~1e-4+)
         lr_scheduler_type="cosine",  # decay to ~0 for a smooth landing
-        warmup_ratio=0.03,           # ramp up over the first 3% of steps to stabilize early updates
+        warmup_steps=warmup_steps,   # ~3% ramp (transformers 5.x dropped warmup_ratio; see above)
         weight_decay=0.01,           # mild regularization
         max_grad_norm=1.0,           # gradient clipping — guards against loss spikes
 

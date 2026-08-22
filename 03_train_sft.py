@@ -86,7 +86,11 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         dtype=torch.bfloat16 if device == "cuda" else torch.float32,  # `dtype` in transformers 5.x
-        # attn_implementation="flash_attention_2",  # enable on CUDA if flash-attn is installed
+        # SDPA is PyTorch's built-in fused attention: fast, and it masks each example correctly
+        # on its own. We deliberately avoid `packing=True` (see below) because that path uses
+        # padding-free flattening, which only Flash Attention implements correctly — and flash-attn
+        # has no prebuilt wheel for this Python/torch, so SDPA + unpacked is the correct combo here.
+        attn_implementation="sdpa",
     )
 
     # ------------------------------------------------------------------
@@ -100,18 +104,11 @@ def main() -> None:
     max_length = 1024                  # dialogues are short; 1024 tokens is plenty
 
     # transformers 5.x removed `warmup_ratio`, so express the same "warm up over the first ~3%
-    # of training" intent as an absolute `warmup_steps`. The catch: with `packing=True` the
-    # optimizer-step count tracks the *token* total (short turns are concatenated into
-    # max_length blocks), NOT the raw example count — so a ratio-of-examples estimate is off by
-    # the packing factor (here ~7x). Estimate the packed step count from the tokenized lengths
-    # instead. This is a cheap one-time pass (the trainer re-tokenizes during packing anyway).
+    # of training" intent as an absolute `warmup_steps`. With `packing=False` (below) each
+    # example is its own sequence, so the optimizer-step count is simply examples / effective
+    # batch — no packing factor to account for.
     effective_batch = per_device_train_batch_size * gradient_accumulation_steps
-    total_tokens = sum(
-        len(tokenizer.apply_chat_template(ex["messages"], tokenize=True)["input_ids"])
-        for ex in dataset["train"]
-    )
-    packed_sequences = math.ceil(total_tokens / max_length)
-    steps_per_epoch = math.ceil(packed_sequences / effective_batch)
+    steps_per_epoch = math.ceil(len(dataset["train"]) / effective_batch)
     warmup_steps = max(1, round(0.03 * steps_per_epoch * num_train_epochs))
 
     args = SFTConfig(
@@ -141,7 +138,10 @@ def main() -> None:
 
         # --- Sequence handling ---
         max_length=max_length,       # dialogues are short; 1024 tokens is plenty (set above)
-        packing=True,                # concatenate short examples to fill sequences => big throughput win
+        packing=False,               # keep each dialogue a separate padded sequence so SDPA masks
+                                     # them correctly. packing=True's bfd strategy uses padding-free
+                                     # flattening, which needs flash-attn (unavailable here) to stop
+                                     # examples from attending across each other.
         assistant_only_loss=ASSISTANT_ONLY_LOSS,  # loss only on the human-reply turns
 
         # --- Validation & checkpoints ---
